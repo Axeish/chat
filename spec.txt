@@ -14,7 +14,7 @@ Services:
 	DoS resistance - We protect against DoS attacks by enforcing a SYN cookie policy for
 		all clients wishing to connect to the server.  In addition we are going to implement
 		rate limiting by both USERNAME and IP/Port (by preventing a client from requesting
-		a login from the server too fast).  (An additional protection we can add is a 
+		a login from the server too fast).  (An additional protection we can add is a
 		peer to peer DoS protection, by rate limiting the messages via the client itself. But
 		this policy can't be enforced because the clients manage their own connections to other
 		users, and server does not play an intermediate role, for good reason).
@@ -67,11 +67,11 @@ S -> C: DoS_cookie (unique cookie that C must possess to auth with S)
 [client prompts user for username (UN) and password (PWD)]
 C -> S: {UN, Nu, hash(PWD), Kuser_pub}Kserv_pub, DoS_cookie
 
-/** At this point, the server FIRST checks the IP/Port of C and the SYN COOKIE, 
- *	It then should validate the username (check that user is registered and that the 
+/** At this point, the server FIRST checks the IP/Port of C and the SYN COOKIE,
+ *	It then should validate the username (check that user is registered and that the
  *	user is not already logged in, that the user is not on the "brown-list")
  *	Therafter the server will check the hash(SALT|PASSWORD) against the stored value.
- *	If all is well, it generates the Ksession symmetric AES key. 
+ *	If all is well, it generates the Ksession symmetric AES key.
  */
 
 S -> C: {Ksession, UN, Nu, Ns}Kuser_pub
@@ -110,7 +110,7 @@ U -> S: Ksu{‘LOGOUT’, U, Nu}
 S -> U: Ksu{‘LOGOUT_ACK’, Nu}
 U -> S: Ksu{Nu}
 
-After logout, server will remove user from userlist, forgetting all temporary information, 
+After logout, server will remove user from userlist, forgetting all temporary information,
 in particular the symmetric session key, the public key of the client, and the client's
 current network endpoint.
 
@@ -142,17 +142,17 @@ User (A) to User (B): "MESSAGE" protocol:
 A -> B: HMAC(Kab{ ‘MESSAGE’, A, a_ts, message})
 B -> A: Kab{ ‘MESSAGE_ACK’, a_ts}
 
-The message is also hashed to guarantee authenticity.  
-If a MESSAGE_ACK is not returned within a specified time period, A can assume B has been disconnected, 
-logged out, or otherwise, and will terminate the session key, Kab, warning the user. 
-In the event that A either disconnects from the server and/or logs out, or exits the program, 
+The message is also hashed to guarantee authenticity.
+If a MESSAGE_ACK is not returned within a specified time period, A can assume B has been disconnected,
+logged out, or otherwise, and will terminate the session key, Kab, warning the user.
+In the event that A either disconnects from the server and/or logs out, or exits the program,
 then the shared key with B will be forgotten as well (never persisted to disk)
 
 
 Discussion:
 	Issues 1, 2, and 3 were talked about in previous sections
 	4.) If the users do not trust the server can you devise a scheme that prevents the server from decrypting the communication
-	between the users without requiring the users to remember more than a password? Discuss the cases when the user trusts 
+	between the users without requiring the users to remember more than a password? Discuss the cases when the user trusts
 	(vs. does not trust) the application running on his workstation.
 
 		If the server is compromised, the server can connect users to an attacker rather than to the requested user.
@@ -165,7 +165,7 @@ Discussion:
 		Distribution frameworks, the KDC being compromised can cause some pain for the system, particularly denial of service, man in
 		the middle attacks etc.
 
-		If the user can't trust the client, then user's password and username are not going to be secure.  The workstation will 
+		If the user can't trust the client, then user's password and username are not going to be secure.  The workstation will
 		be able to figure out what this plaintext is before sending it in the authentication protocol to the server.  If a user
 		doesn't trust a workstation, they should change their password asap. That being said, any information that the client receives
 		in that session is not secure, however if the user were to log in from another trusted client, the old compromised client will
