@@ -2,10 +2,14 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 
-import socket
+import socket as sock
+import select
+from config import config
+import json
 import sys
 
 ADDR_BOOK = {} # holds addr tuples for all comms
+KEYCHAIN = {} # holds keys
 
 def init():
     global _SOCK, LISTENABLES, SADDR
@@ -13,7 +17,7 @@ def init():
     _SOCK.bind(('', 0))
 
     # eventually read from a config file:
-    ADDR_BOOK['server'] = ('127.0.0.1', 33333)
+    ADDR_BOOK['server'] = (config['server_ip'], config['server_port'])
 
     LISTENABLES = [sys.stdin, _SOCK]
 
