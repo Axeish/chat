@@ -5,11 +5,18 @@ from cryptography.hazmat.primitives import serialization
 import socket as sock
 import select
 from config import config
-import json
+from helpers import dump, load
 import sys
+import logging
+import getpass
+
+logging.basicConfig()
+logger = logging.getLogger('chat-server')
+logger.setLevel(logging.DEBUG)
 
 ADDR_BOOK = {} # holds addr tuples for all comms
 KEYCHAIN = {} # holds keys
+BUF_SIZE = 2048
 
 def init():
     global _SOCK, LISTENABLES, SADDR
@@ -22,9 +29,8 @@ def init():
     LISTENABLES = [sys.stdin, _SOCK]
 
 
-def send_message_to(to_whom, kind, body, **kwargs):
-    data = {'type': kind, 'body': body}
-    _SOCK.sendto(json.dumps(data), ADDR_BOOK[to_whom])
+def send_data_to(data, addr):
+    _SOCK.sendto(data, addr)
 
 
 def connect():
@@ -32,8 +38,12 @@ def connect():
     """
     Client to Server LOGIN protocol handler
     """
+    msg = dump({
+        'kind': 'LOGIN',
+        'context': 'INIT',
+    })
     # need some identifying information here?
-    send_message_to('server', 'LOGIN', {'hostname': 'cstiteler@127.0.0.1'})
+    send_data_to(msg, ADDR_BOOK['server'])
 
 
 def make_keys():
@@ -53,12 +63,81 @@ def handle_invite(*args):
 def handle_message(*args):
     pass
 
-# a handler for each valid message type received
-handlers = {'INVITE': handle_invite, 'MESSAGE': handle_message, }
+def get_login_submit_payload(msg):
+    return "payload"
 
+def handle_login_cookie(msg):
+    # TODO: validate cookie message
+    global COOKIE
+    COOKIE = msg['cookie']
+
+    # WE NEED TO SEND COOKIE, {UN, Nu, hash(PWD), Kuser_pub}Kserv_pub
+
+    resp = dump({
+        'kind': 'LOGIN',
+        'context': 'SUBMIT',
+        'cookie': COOKIE,
+        'payload': get_login_submit_payload(msg)
+    })
+
+    send_data_to(resp, ADDR_BOOK['server'])
+
+def handle_login_challenge():
+    pass
+
+# server inputs:
+login_handlers = {
+    'cookie': handle_login_cookie,
+    'challenge': handle_login_challenge,
+}
+
+def login_handler(msg):
+    ctx = msg.get('context')
+    # TODO: VALIDATE CONTEXT!
+    handler = login_handlers[ctx]
+    handler(msg)
+
+def logout_handler(msg):
+    print "Goodbye..."
+    # send logout ack to server?
+    sys.exit(0)
+
+def list_handler(msg):
+    # validate for empty list or something..
+    print msg.get('list')
+
+def connect_handler(msg):
+    pass
+
+
+# a handler for each valid message type received
+socket_handlers = {
+    # inputs from other clients
+    'INVITE': handle_invite,
+    'MESSAGE': handle_message,
+    # inputs from the server
+    'LOGIN': login_handler,
+    'LOGOUT': logout_handler,
+    'LIST': list_handler,
+    'CONNECT': connect_handler
+}
 
 def handle_socket_event():
-    pass
+    """
+    handler function for socket events
+    try's to load the message, else it
+    prints an error
+    """
+    raw_msg = _SOCK.recv(BUF_SIZE)
+
+    try:
+        msg = load(raw_msg)
+        logger.debug("RECD MESSAGE: {}".format(msg))
+    except Exception as e:
+        print "[ERROR]: {}".format(e)
+    # TODO: VALIDATE MESSAGE HERE
+    handler = socket_handlers[msg.get('kind')]
+    handler(msg)
 
 
 def handle_stdin_event():

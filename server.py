@@ -1,26 +1,27 @@
+# -*- coding: utf-8 -*-
 import os
 import sys
 import logging
 import socket
 import json
+import time
+from user import User
+from helpers import dump, load
 from config import config
+
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding, serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding as padding_asym
 
 logging.basicConfig()
-logger = logging.getLogger()
+logger = logging.getLogger('chat-server')
 logger.setLevel(logging.DEBUG)
 
 
 KEYCHAIN = {}
 USERS = {}  # maps uid to User class
-
-
-class User:
-    def __init__(self):
-        pass
+ATTEMPTED_LOGINS = {}
 
 
 def parse_private_key(pem_string):
@@ -56,7 +57,41 @@ def load_server_keys():
             logger.error("Couldn't read private key from file: {}".format(e))
 
 
-def handle_login(*args):
+def handle_login_init(body, sender):
+    # send cookie
+    cookie = make_cookie(sender)
+    ATTEMPTED_LOGINS[cookie] = User(cookie, sender)
+    resp = dump({
+        'kind': 'LOGIN',
+        'cookie': cookie,
+        'context': 'cookie',
+    })
+    logger.debug("RECV LOGIN INIT, RESP IS {}".format(resp))
+    ATTEMPTED_LOGINS[cookie].send(_SOCK, resp)
+
+def make_cookie(addr):
+    dough = '-'.join(map(str, [addr[0], addr[1], time.time()]))
+    # TODO: cookie = encrypt(dough)
+    # return cookie
+    return dough
+
+def handle_login_submit(body, sender):
+    # validate the cookie,
+    # valid the submission
+    pass
+
+def handle_login_response(body, sender):
+    # validate the response to challenge
+    pass
+
+
+login_handlers = {
+    'INIT': handle_login_init,
+    'SUBMIT': handle_login_submit,
+    'RESPONSE': handle_login_response,
+}
+
+def handle_login(body, sender):
     """
     C -> S: ‘LOGIN’
     S -> C: DoS_cookie (unique cookie that C must possess to auth with S)
@@ -73,8 +108,25 @@ def handle_login(*args):
     C -> S: Ksession{Ns}
     """
     logger.debug("[RECEIVED LOGIN]...")
-    print args
+
+    ctx = body.get('context')
+    if not ctx or ctx not in login_handlers:
+        terminate_login(body, sender)
+
+    handler = login_handlers[ctx]
+    handler(body, sender)
+
+
+
+def terminate_login(body, sender):
+    # TODO: remove from ATTEMPTED_LOGINS
+    # and penalize in brown list for failed attempt
     pass
+
+
+def get_cookie(hostname, addr):
+    # TODO: make unique w/o username
+    return "{}:{}".format(hostname, addr[1])
 
 
 def handle_logout(*args):
@@ -100,22 +152,23 @@ handlers = {
     'CONNECT': handle_connect,
 }
 
-
 def listen_and_serve():
     logger.debug("starting server...")
 
     while True:
         raw_msg, sender = _SOCK.recvfrom(_PORT)
         try:
-            msg = json.loads(raw_msg)
-            assert msg['type'] in handlers.keys()
+            msg = load(raw_msg)
+            logger.debug("msg is: {}".format(msg))
+            assert msg.get('kind') in handlers.keys()
         except AssertionError:
-            logger.error("Invalid message type")
+            logger.error("Invalid message kind".format(msg['kind']))
         except Exception as e:
-            logger.error("Unable to parse message: {}".format(raw_msg))
+            logger.error("Unable to parse message: {}, e: {}".format(raw_msg, e))
 
-        handler = handlers[msg.get('type')]
-        handler(msg.get('body'), sender)
+        handler = handlers[msg.get('kind')]
+        logger.debug("msg body in listen and serve is: {}".format(msg))
+        handler(msg, sender)
 
 
 def network_init():
