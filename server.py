@@ -76,9 +76,10 @@ def make_cookie(addr):
     return dough
 
 def handle_login_submit(body, sender):
+    logger.debug("RECV LOGIN SUBMIT, MSG IS {}".format(body))
     # validate the cookie,
     # valid the submission
-    pass
+
 
 def handle_login_response(body, sender):
     # validate the response to challenge
@@ -107,8 +108,6 @@ def handle_login(body, sender):
     S -> C: {Ksession, UN, Nu, Ns}Kuser_pub
     C -> S: Ksession{Ns}
     """
-    logger.debug("[RECEIVED LOGIN]...")
-
     ctx = body.get('context')
     if not ctx or ctx not in login_handlers:
         terminate_login(body, sender)

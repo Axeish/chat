@@ -5,7 +5,7 @@ from cryptography.hazmat.primitives import serialization
 import socket as sock
 import select
 from config import config
-from helpers import dump, load
+from helpers import dump, load, nonce
 import sys
 import logging
 import getpass
@@ -17,6 +17,7 @@ logger.setLevel(logging.DEBUG)
 ADDR_BOOK = {} # holds addr tuples for all comms
 KEYCHAIN = {} # holds keys
 BUF_SIZE = 2048
+LOGIN = {}
 
 def init():
     global _SOCK, LISTENABLES, SADDR
@@ -54,6 +55,9 @@ def make_keys():
         key_size=2048,
         backend=default_backend())
     KEYCHAIN['public'] = KEYCHAIN['private'].public_key()
+    KEYCHAIN['public_bytes'] = KEYCHAIN['public'].public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo)
 
 
 def handle_invite(*args):
@@ -64,19 +68,27 @@ def handle_message(*args):
     pass
 
 def get_login_submit_payload(msg):
-    return "payload"
+    #{UN, Nu, hash(PWD), Kuser_pub}Kserv_pub
+    username = raw_input('Username:')
+    password = raw_input('Password:')
+    return {
+        "username": username,
+        # obviously have to hash this.
+        "password": password,
+        "nonce_user": nonce(32),
+        "public_key": KEYCHAIN['public_bytes']
+    }
 
 def handle_login_cookie(msg):
     # TODO: validate cookie message
-    global COOKIE
-    COOKIE = msg['cookie']
+    LOGIN['cookie'] = msg['cookie']
 
-    # WE NEED TO SEND COOKIE, {UN, Nu, hash(PWD), Kuser_pub}Kserv_pub
+    # WE NEED TO SEND COOKIE, 
 
     resp = dump({
         'kind': 'LOGIN',
         'context': 'SUBMIT',
-        'cookie': COOKIE,
+        'cookie': LOGIN['cookie'],
         'payload': get_login_submit_payload(msg)
     })
 
