@@ -4,7 +4,7 @@ from cryptography.hazmat.primitives import serialization
 
 s_private = rsa.generate_private_key(
     public_exponent=65537,
-    key_size=2048,
+    key_size=4096,
     backend=default_backend())
 
 with open('server.private.key', 'w') as f:
