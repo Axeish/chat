@@ -87,7 +87,7 @@ def parse_public_key(pem_string):
 
 
 def aes_key():
-    return os.urandom(AES_KEY_SIZE / 8).encode('base64')
+    return os.urandom(AES_KEY_SIZE / 8)
 
 
 def aes_encrypt(key, iv, plaintext):
@@ -98,6 +98,14 @@ def aes_encrypt(key, iv, plaintext):
                     backend=default_backend())
     encryptor = cipher.encryptor()
     return (encryptor.update(padded) + encryptor.finalize())
+
+
+def aes_decrypt(key, iv, cipher_bytes):
+    cipher = Cipher(algorithms.AES(key),
+                modes.CBC(iv),
+                backend=default_backend())
+    decryptor = cipher.decryptor()
+    return unpad(decryptor.update(cipher_bytes) + decryptor.finalize())
 
 
 def init_vector(size):

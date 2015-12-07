@@ -124,21 +124,23 @@ def handle_login_challenge(msg):
         return
 
     iv = msg['init_vector'].decode('base64')
+
     KEYCHAIN['session'] = challenge.get('session_key').decode('base64')
 
     # else we can respond to the challenge.
+    logger.debug("SERVER NONCE RECEIVED: {}".format(challenge['server_nonce'].format('base64')))
 
     answer = aes_encrypt(KEYCHAIN['session'], 
         iv, challenge['server_nonce'])
 
-    logger.debug("answer for encryption is: {}".format(answer))
-
-    response = {
+    resp = jdump({
         'kind': 'LOGIN',
-        'context': 'response',
+        'context': 'RESPONSE',
         'cookie': LOGIN['cookie'],
         'payload': pdump(answer),
-    }
+    })
+
+    send_data_to(resp, ADDR_BOOK['server'])
 
 # server inputs:
 login_handlers = {

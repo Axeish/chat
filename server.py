@@ -61,14 +61,14 @@ def handle_login_submit(body, sender):
                                         pload(body['public_key']))
     public_key = parse_public_key(user_public_key_bytes)
 
-    k_session = aes_key()
+    k_session = aes_key().encode('base64')
     nonce_server = nonce(16)
     nonce_time = time.time()
     iv = init_vector(16)
 
     user.update_submit(payload['username'], payload['password_hash'],
                        payload['nonce_user'], public_key, k_session,
-                       nonce_server, nonce_time)
+                       nonce_server, nonce_time, iv)
 
     # check user is registered and not logged in, with brown list handling
     # validate password hash
@@ -84,6 +84,7 @@ def handle_login_submit(body, sender):
 
 
 def handle_login_response(body, sender):
+    logger.debug("LOGIN RESPONSE RECEIVED")
     # validate the response to challenge
     user = ATTEMPTED_LOGINS[body.get('cookie')]
     if not user:
@@ -93,7 +94,17 @@ def handle_login_response(body, sender):
 
     enc_answer = pload(body['payload'])
     # make sure this is wrapped in an error handler
-    dec_answer = aes_decrypt(user.session_key, )
+    dec_answer = aes_decrypt(user.session_key.decode('base64'),
+             user.iv, enc_answer)
+    logger.debug("DECRYPTED ANSWER: {}".format(dec_answer))
+
+    if dec_answer == user.nonce_server:
+        logger.debug("LOGGING IN: {}".format(user.username))
+        USERS[user.cookie] = user
+    else:
+        logger.debug("FAILED TO LOGIN: {}".format(user.username))
+        logger.debug("ANSWER WAS: {}".format(enc_answer.decode('base64')))
+
 
 login_handlers = {
     'INIT': handle_login_init,
