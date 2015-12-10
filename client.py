@@ -8,7 +8,7 @@ from config import config
 from helpers import *
 import sys
 import logging
-import getpass
+import atexit
 
 logging.basicConfig()
 logger = logging.getLogger('chat-client')
@@ -18,7 +18,7 @@ ADDR_BOOK = {}  # holds addr tuples for all comms
 KEYCHAIN = {}  # holds keys
 BUF_SIZE = 2048
 LOGIN = {}
-NONCE_SIZE = 16 # bytes
+NONCE_SIZE = 16  # bytes
 
 
 def init():
@@ -42,11 +42,20 @@ def send_data_to(data, addr):
     _SOCK.sendto(data, addr)
 
 
+def do_logout():
+    # do_logout() triggered by sys.exit(0) ->
+    # don't need to exit here.
+    print "LOGGING OUT! GOODBYE!"
+
+
 def connect():
     # client attempts to connect to server
     """
     Client to Server LOGIN protocol handler
     """
+    # logout at exit
+    atexit.register(do_logout)
+
     msg = jdump({'kind': 'LOGIN', 'context': 'INIT', })
     # need some identifying information here?
     send_data_to(msg, ADDR_BOOK['server'])
@@ -110,8 +119,7 @@ def handle_login_cookie(msg):
 
 def handle_login_challenge(msg):
     logger.debug("Rec'd Login Challenge")
-    challenge = jload(rsa_decrypt(KEYCHAIN['private'],
-        pload(msg['payload'])))
+    challenge = jload(rsa_decrypt(KEYCHAIN['private'], pload(msg['payload'])))
 
     logger.debug("CHALLENGE IS: {}".format(challenge))
 
@@ -130,10 +138,10 @@ def handle_login_challenge(msg):
     KEYCHAIN['session'] = challenge.get('session_key').decode('base64')
 
     # else we can respond to the challenge.
-    logger.debug("SERVER NONCE RECEIVED: {}".format(challenge['server_nonce'].format('base64')))
+    logger.debug("SERVER NONCE RECEIVED: {}".format(
+        challenge['server_nonce'].format('base64')))
 
-    answer = aes_encrypt(KEYCHAIN['session'], 
-        iv, challenge['server_nonce'])
+    answer = aes_encrypt(KEYCHAIN['session'], iv, challenge['server_nonce'])
 
     resp = jdump({
         'kind': 'LOGIN',
@@ -159,16 +167,43 @@ def login_handler(msg):
 
 
 def logout_handler(msg):
-    print "Goodbye..."
-    # send logout ack to server?
-    sys.exit(0)
+    # If a server sends us a logout message
+    # it should be because we requested a logout.
+    logger.debug("RECEIVED LOGOUT MESSAGE...")
+
+    enc_payload = msg.get('')
+    enc_logout_resp = pload(msg['payload'])
+    dec_logout_resp = jload(aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
+                                enc_logout_resp))
+    if dec_logout_resp.get('nonce_user') == LOGIN['nonce_user_logout']:
+        # tell server we're logging out.
+
+        answer = jdump({'nonce_user': LOGIN['nonce_user_logout']})
+
+        payload = pdump(aes_encrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
+            answer))
+
+        resp = jdump({
+            'kind': 'LOGOUT',
+            'context': 'fin',
+            'cookie': LOGIN['cookie'],
+            'payload': payload,
+        })
+        send_data_to(resp, ADDR_BOOK['server'])
+
+        # then do it.
+        # the exit is caught by the atexit.register()
+        # function, so we don't need to handle any cases here.
+        sys.exit(0)
+    else:
+        logger.debug("Invalid logout nonce, not logging out")
 
 
 def list_handler(msg):
     # validate the nonce we created when sending is good
     enc_list_resp = pload(msg['payload'])
     dec_list_resp = aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
-                    enc_list_resp)
+                                enc_list_resp)
     list_response = jload(dec_list_resp)
 
     logger.debug("LIST RESPONE IS: {}".format(list_response))
@@ -182,7 +217,7 @@ def list_handler(msg):
     for username in user_list:
         print username
 
-    
+
 def connect_handler(msg):
     pass
 
@@ -232,7 +267,7 @@ def list_request(*args):
     }
 
     payload = aes_encrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
-                 jdump(data))
+                          jdump(data))
 
     req = jdump({
         'kind': 'LIST',
@@ -243,15 +278,40 @@ def list_request(*args):
     send_data_to(req, ADDR_BOOK['server'])
 
 
+def logout_request(*args):
+    # user requests to log out from server:
+
+    # reset logout nonce
+    LOGIN['nonce_user_logout'] = nonce(NONCE_SIZE)
+
+    data = {
+        'username': LOGIN['username'],
+        'nonce_user': LOGIN['nonce_user_logout'],
+    }
+
+    payload = aes_encrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
+                      jdump(data))
+
+    req = jdump({
+        'kind': 'LOGOUT',
+        'context': 'init',
+        'cookie': LOGIN['cookie'],
+        'payload': pdump(payload),
+    })
+
+    send_data_to(req, ADDR_BOOK['server'])
+
 
 def invite_request(*args):
     pass
 
 # special messages from user and their handlers:
 user_protocols = {
-    '@LIST': list_request,
-    '@INVITE': invite_request,
-}
+        '@LIST': list_request, 
+        '@INVITE': invite_request, 
+        '@LOGOUT': logout_request,
+    }
+
 
 def handle_stdin_event():
     text = sys.stdin.readline()

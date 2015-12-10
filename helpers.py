@@ -102,8 +102,8 @@ def aes_encrypt(key, iv, plaintext):
 
 def aes_decrypt(key, iv, cipher_bytes):
     cipher = Cipher(algorithms.AES(key),
-                modes.CBC(iv),
-                backend=default_backend())
+                    modes.CBC(iv),
+                    backend=default_backend())
     decryptor = cipher.decryptor()
     return unpad(decryptor.update(cipher_bytes) + decryptor.finalize())
 

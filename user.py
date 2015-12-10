@@ -6,6 +6,8 @@ class User(object):
         self.cookie = cookie
         self.prev_ctx = 'init'
         self.addr = addr
+        #self.countdown = 5
+        self.logout_requested = False
 
     def update_submit(self, name, pwdhash, nonce, pkey, skey, nonce_server,
                       nonce_time, iv):
@@ -18,6 +20,10 @@ class User(object):
         self.nonce_time = nonce_time
         self.iv = iv
 
+    def prep_logout(self, logout_nonce):
+        self.logout_nonce = logout_nonce
+        self.logout_requested = True
+
     def send(self, socket, data):
         # TODO -> Handle socket errors here
         socket.sendto(data, self.addr)
@@ -29,5 +35,4 @@ class User(object):
             'user_nonce': self.nonce,
             'server_nonce': self.nonce_server,
         }
-        print "SERVER NONCE IS: {}".format(self.nonce_server.format('base64'))
         return rsa_encrypt(self.public_key, jdump(challenge))

@@ -86,16 +86,15 @@ def handle_login_submit(body, sender):
 def handle_login_response(body, sender):
     logger.debug("LOGIN RESPONSE RECEIVED")
     # validate the response to challenge
-    user = ATTEMPTED_LOGINS[body.get('cookie')]
-    if not user:
-        # DoS cookie is invalid
-        logger.debug("terminating connection, cookie invalid in response")
+    try:
+        user = validate_user_cookie(body.get('cookie'), ATTEMPTED_LOGINS)
+    except:
         terminate_login(body, sender)
 
     enc_answer = pload(body['payload'])
     # make sure this is wrapped in an error handler
-    dec_answer = aes_decrypt(user.session_key.decode('base64'),
-             user.iv, enc_answer)
+    dec_answer = aes_decrypt(user.session_key.decode('base64'), user.iv,
+                             enc_answer)
     logger.debug("DECRYPTED ANSWER: {}".format(dec_answer))
 
     if dec_answer == user.nonce_server:
@@ -133,7 +132,79 @@ def get_cookie(hostname, addr):
     return "{}:{}".format(hostname, addr[1])
 
 
-def handle_logout(*args):
+def handle_logout_init(body, sender):
+    user = validate_user_cookie(body.get('cookie'), USERS)
+
+    payload = pload(body['payload'])
+    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv,
+                         payload))
+
+    if not data['username'] == user.username:
+        logger.debug("INVALID LOGOUT REQUEST -> USERNAME DOESN'T MATCH!")
+        terminate_login(body, sender)
+
+    user.prep_logout(data['nonce_user'])
+
+    resp = jdump({
+        'nonce_user': data['nonce_user'],
+    })
+
+    resp_payload = pdump(aes_encrypt(user.session_key.decode('base64'), user.iv,
+                               resp))
+
+    resp = jdump({
+        'kind': 'LOGOUT',
+        'payload': resp_payload
+    })
+
+    user.send(_SOCK, resp)
+
+
+def validate_user_cookie(cookie, where):
+    user = where.get(cookie)
+    if not user:
+        # DoS cookie is invalid
+        logger.debug("terminating connection, cookie invalid in response")
+        raise ValueError("Invalid user cookie!")
+
+    # do other checks on the cookie and the user.
+    return user
+
+
+def handle_logout_fin(body, sender):
+    try:
+        user = validate_user_cookie(body.get('cookie'), USERS)
+    except:
+        terminate_connection(body, sender)
+
+    payload = pload(body['payload'])
+
+    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv,
+                             payload))
+
+    logout_nonce = data['nonce_user']
+
+    # check nonce sent by user.
+    if user.logout_requested and user.logout_nonce == logout_nonce:
+        remove_user(user)
+    else:
+        logger.debug("Invalid credentials for logout of user: {}".format(user.username))
+
+def remove_user(user):
+    logger.debug("REMOVING USER FROM USERS: {}".format(user.username))
+    cookie = user.cookie
+    try:
+        del USERS[cookie]
+    except:
+        logger.error("Unable to logout user with username: {}".format(user.username))
+
+
+logout_handlers = {
+    'init': handle_logout_init,
+    'fin': handle_logout_fin,
+}
+
+def handle_logout(body, sender):
     """
     ------
     User (U) to Server (S): ‘LOGOUT’ protocol:
@@ -148,8 +219,12 @@ def handle_logout(*args):
 
     """
     logger.debug("[RECEIVED LOGOUT]...")
-    print args
-    pass
+    ctx = body.get('context')
+    if not ctx or ctx not in logout_handlers:
+        terminate_login(body, sender)
+
+    handler = logout_handlers[ctx]
+    handler(body, sender)
 
 
 def handle_list(body, sender):
@@ -164,25 +239,24 @@ def handle_list(body, sender):
     # only ever one context, don't need to switch on context.
     payload = pload(body['payload'])
 
-    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv, payload))
+    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv,
+                             payload))
 
     #logger.debug("RECEIVED DATA: {}".format(data))
 
     if not data['username'] == user.username:
         logger.debug("INVALID LIST REQUEST -> USERNAME DOESN'T MATCH!")
         terminate_login(body, sender)
-    
+
     list_response = jdump({
         'list': [u.username for u in USERS.values()],
         'nonce_user': data['nonce_user']
     })
 
-    resp_payload = aes_encrypt(user.session_key.decode('base64'), user.iv, list_response)
+    resp_payload = aes_encrypt(user.session_key.decode('base64'), user.iv,
+                               list_response)
 
-    resp = jdump({
-        'kind': 'LIST',
-        'payload': pdump(resp_payload),
-    })    
+    resp = jdump({'kind': 'LIST', 'payload': pdump(resp_payload), })
 
     logger.debug("SENDING LIST...")
     user.send(_SOCK, resp)
