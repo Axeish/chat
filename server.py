@@ -114,21 +114,6 @@ login_handlers = {
 
 
 def handle_login(body, sender):
-    """
-    C -> S: ‘LOGIN’
-    S -> C: DoS_cookie (unique cookie that C must possess to auth with S)
-    [client prompts user for username (UN) and password (PWD)]
-    C -> S: {UN, Nu, hash(PWD), Kuser_pub}Kserv_pub, DoS_cookie
-
-    At this point, the server FIRST checks the IP/Port of C and the SYN COOKIE,
-    It then should validate the username (check that user is registered and that the
-    user is not already logged in, that the user is not on the "brown-list")
-    Therafter the server will check the hash(SALT|PASSWORD) against the stored value.
-    If all is well, it generates the Ksession symmetric AES key.
-
-    S -> C: {Ksession, UN, Nu, Ns}Kuser_pub
-    C -> S: Ksession{Ns}
-    """
     ctx = body.get('context')
     if not ctx or ctx not in login_handlers:
         terminate_login(body, sender)
@@ -149,14 +134,58 @@ def get_cookie(hostname, addr):
 
 
 def handle_logout(*args):
+    """
+    ------
+    User (U) to Server (S): ‘LOGOUT’ protocol:
+
+    U -> S: Ksu{‘LOGOUT’, U, Nu}
+    S -> U: Ksu{‘LOGOUT_ACK’, Nu}
+    U -> S: Ksu{Nu}
+
+    After logout, server will remove user from userlist, forgetting all temporary information,
+    in particular the symmetric session key, the public key of the client, and the client's
+    current network endpoint.
+
+    """
     logger.debug("[RECEIVED LOGOUT]...")
     print args
     pass
 
 
-def handle_list(*args):
+def handle_list(body, sender):
     logger.debug("[RECEIVED LIST]...")
-    print args
+
+    user = USERS[body.get('cookie')]
+    if not user:
+        # DoS cookie is invalid
+        logger.debug("terminating connection, cookie invalid in response")
+        terminate_login(body, sender)
+
+    # only ever one context, don't need to switch on context.
+    payload = pload(body['payload'])
+
+    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv, payload))
+
+    #logger.debug("RECEIVED DATA: {}".format(data))
+
+    if not data['username'] == user.username:
+        logger.debug("INVALID LIST REQUEST -> USERNAME DOESN'T MATCH!")
+        terminate_login(body, sender)
+    
+    list_response = jdump({
+        'list': [u.username for u in USERS.values()],
+        'nonce_user': data['nonce_user']
+    })
+
+    resp_payload = aes_encrypt(user.session_key.decode('base64'), user.iv, list_response)
+
+    resp = jdump({
+        'kind': 'LIST',
+        'payload': pdump(resp_payload),
+    })    
+
+    logger.debug("SENDING LIST...")
+    user.send(_SOCK, resp)
 
 
 def handle_connect(*args):

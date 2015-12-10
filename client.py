@@ -18,6 +18,7 @@ ADDR_BOOK = {}  # holds addr tuples for all comms
 KEYCHAIN = {}  # holds keys
 BUF_SIZE = 2048
 LOGIN = {}
+NONCE_SIZE = 16 # bytes
 
 
 def init():
@@ -76,7 +77,7 @@ def get_login_submit_payload(msg):
     #{UN, Nu, hash(PWD), Kuser_pub}Kserv_pub
     username = raw_input('Username:')
     password = raw_input('Password:')
-    LOGIN['nonce'] = nonce(16)
+    LOGIN['nonce'] = nonce(NONCE_SIZE)
     LOGIN['username'] = username
     return {
         "username": username,
@@ -125,6 +126,7 @@ def handle_login_challenge(msg):
 
     iv = msg['init_vector'].decode('base64')
 
+    KEYCHAIN['init_vector'] = iv
     KEYCHAIN['session'] = challenge.get('session_key').decode('base64')
 
     # else we can respond to the challenge.
@@ -163,10 +165,24 @@ def logout_handler(msg):
 
 
 def list_handler(msg):
-    # validate for empty list or something..
-    print msg.get('list')
+    # validate the nonce we created when sending is good
+    enc_list_resp = pload(msg['payload'])
+    dec_list_resp = aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
+                    enc_list_resp)
+    list_response = jload(dec_list_resp)
 
+    logger.debug("LIST RESPONE IS: {}".format(list_response))
 
+    if list_response['nonce_user'] != LOGIN['nonce_user_list']:
+        logger.debug("INVALID LIST RESPONSE!!")
+        return
+
+    user_list = list_response['list']
+    print "Users currently logged in are: "
+    for username in user_list:
+        print username
+
+    
 def connect_handler(msg):
     pass
 
@@ -201,9 +217,49 @@ def handle_socket_event():
     handler(msg)
 
 
-def handle_stdin_event():
-    _input = sys.stdin.readline()
+def list_request(*args):
+    # user requested a "LIST"
+    # TODO VALIDATE CONNECTED, VALIDATE HAVE KEYS
+
+    # create new LIST nonce to be checked on list receive
+    # to guarantee freshness
+    LOGIN['nonce_user_list'] = nonce(NONCE_SIZE)
+    logger.debug("SETTING LIST NONCE: {}".format(LOGIN['nonce_user_list']))
+
+    data = {
+        'username': LOGIN['username'],
+        'nonce_user': LOGIN['nonce_user_list'],
+    }
+
+    payload = aes_encrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
+                 jdump(data))
+
+    req = jdump({
+        'kind': 'LIST',
+        'cookie': LOGIN['cookie'],
+        'payload': pdump(payload)
+    })
+
+    send_data_to(req, ADDR_BOOK['server'])
+
+
+
+def invite_request(*args):
     pass
+
+# special messages from user and their handlers:
+user_protocols = {
+    '@LIST': list_request,
+    '@INVITE': invite_request,
+}
+
+def handle_stdin_event():
+    text = sys.stdin.readline()
+    if any(text.startswith(p) for p in user_protocols.keys()):
+        handler = user_protocols[text.rstrip()]
+        handler(text)
+    else:
+        logger.debug("[CHAT INPUT]: {}".format(text))
 
 
 def run():
