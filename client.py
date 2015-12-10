@@ -12,7 +12,7 @@ import atexit
 
 logging.basicConfig()
 logger = logging.getLogger('chat-client')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 ADDR_BOOK = {}  # holds addr tuples for all comms
 KEYCHAIN = {}  # holds keys
@@ -173,15 +173,15 @@ def logout_handler(msg):
 
     enc_payload = msg.get('')
     enc_logout_resp = pload(msg['payload'])
-    dec_logout_resp = jload(aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
-                                enc_logout_resp))
+    dec_logout_resp = jload(aes_decrypt(
+        KEYCHAIN['session'], KEYCHAIN['init_vector'], enc_logout_resp))
     if dec_logout_resp.get('nonce_user') == LOGIN['nonce_user_logout']:
         # tell server we're logging out.
 
         answer = jdump({'nonce_user': LOGIN['nonce_user_logout']})
 
-        payload = pdump(aes_encrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
-            answer))
+        payload = pdump(aes_encrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'
+                                                                  ], answer))
 
         resp = jdump({
             'kind': 'LOGOUT',
@@ -290,7 +290,7 @@ def logout_request(*args):
     }
 
     payload = aes_encrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
-                      jdump(data))
+                          jdump(data))
 
     req = jdump({
         'kind': 'LOGOUT',
@@ -307,10 +307,10 @@ def invite_request(*args):
 
 # special messages from user and their handlers:
 user_protocols = {
-        '@LIST': list_request, 
-        '@INVITE': invite_request, 
-        '@LOGOUT': logout_request,
-    }
+    '@list': list_request,
+    '@invite': invite_request,
+    '@logout': logout_request,
+}
 
 
 def handle_stdin_event():

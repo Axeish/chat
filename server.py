@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import padding as padding_asym
 
 logging.basicConfig()
 logger = logging.getLogger('chat-server')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 KEYCHAIN = {}
 USERS = {}  # maps uid to User class
@@ -137,7 +137,7 @@ def handle_logout_init(body, sender):
 
     payload = pload(body['payload'])
     data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv,
-                         payload))
+                             payload))
 
     if not data['username'] == user.username:
         logger.debug("INVALID LOGOUT REQUEST -> USERNAME DOESN'T MATCH!")
@@ -145,17 +145,12 @@ def handle_logout_init(body, sender):
 
     user.prep_logout(data['nonce_user'])
 
-    resp = jdump({
-        'nonce_user': data['nonce_user'],
-    })
+    resp = jdump({'nonce_user': data['nonce_user'], })
 
-    resp_payload = pdump(aes_encrypt(user.session_key.decode('base64'), user.iv,
-                               resp))
+    resp_payload = pdump(aes_encrypt(user.session_key.decode('base64'),
+                                     user.iv, resp))
 
-    resp = jdump({
-        'kind': 'LOGOUT',
-        'payload': resp_payload
-    })
+    resp = jdump({'kind': 'LOGOUT', 'payload': resp_payload})
 
     user.send(_SOCK, resp)
 
@@ -188,7 +183,9 @@ def handle_logout_fin(body, sender):
     if user.logout_requested and user.logout_nonce == logout_nonce:
         remove_user(user)
     else:
-        logger.debug("Invalid credentials for logout of user: {}".format(user.username))
+        logger.debug("Invalid credentials for logout of user: {}".format(
+            user.username))
+
 
 def remove_user(user):
     logger.debug("REMOVING USER FROM USERS: {}".format(user.username))
@@ -196,13 +193,12 @@ def remove_user(user):
     try:
         del USERS[cookie]
     except:
-        logger.error("Unable to logout user with username: {}".format(user.username))
+        logger.error("Unable to logout user with username: {}".format(
+            user.username))
 
 
-logout_handlers = {
-    'init': handle_logout_init,
-    'fin': handle_logout_fin,
-}
+logout_handlers = {'init': handle_logout_init, 'fin': handle_logout_fin, }
+
 
 def handle_logout(body, sender):
     """

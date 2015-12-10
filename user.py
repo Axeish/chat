@@ -30,7 +30,7 @@ class User(object):
 
     def challenge(self):
         challenge = {
-            'session_key': self.session_key, # base 64 encoded
+            'session_key': self.session_key,  # base 64 encoded
             'username': self.username,
             'user_nonce': self.nonce,
             'server_nonce': self.nonce_server,
