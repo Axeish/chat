@@ -9,7 +9,7 @@ from helpers import *
 import sys
 import logging
 import atexit
-from conection import Connection
+from connection import Connection
 
 logging.basicConfig()
 logger = logging.getLogger('chat-client')
@@ -161,8 +161,23 @@ def handle_invite_init(msg):
     if not c:
         logger.debug("Couldn't create connection from ticket")
         return
+    logger.debug("Successfully made connection from ticket")
+
+    c.respond_to_invite()
 
 
+def handle_invite_confirm(msg):
+    payload = msg.get('payload')
+    dec_payload = rsa_decrypt(private_key, pload(payload))
+    data = jload(dec_payload)
+
+    data = jload(dec_payload)
+    to = data['to']
+    c = LOGIN['connections'].get(to)
+    result = c.confirm_connection(data)
+    if result:
+        print "Connected to {}. Type '@msg {}: Hello!' to say hi.".format(to, to)
+    # TODO: handle all this UI stuff
 
 # server inputs:
 invite_handlers = {
@@ -177,6 +192,9 @@ def invite_handler(msg):
     handler = invite_handlers[ctx]
     handler(msg)
 
+
+def message_handler(msg):
+    pass
 
 def logout_handler(msg):
     # If a server sends us a logout message
@@ -227,7 +245,7 @@ def list_handler(msg):
     user_list = list_response['list']
     print "Users currently logged in are: "
     for username in user_list:
-        print username
+        print "- {}".format(username)
 
 
 # server inputs:
@@ -242,7 +260,6 @@ def login_handler(msg):
     # TODO: VALIDATE CONTEXT!
     handler = login_handlers[ctx]
     handler(msg)
-
 
 
 def connect_handler(msg):
@@ -396,7 +413,8 @@ user_protocols = {
     '@list': list_request,
     '@invite': invite_request,
     '@logout': logout_request,
-    '@': message_request,
+    '@msg': message_request,
+    '@help': greet_user,
 }
 
 
@@ -409,12 +427,18 @@ def handle_stdin_event():
         logger.debug("[CHAT INPUT]: {}".format(text))
 
 
+def greet_user():
+    print "welcome to the chat client!!"
+
 def run():
     """
     loops forever, using a python 'select'
     to handle different events by listening on
     stdin AND the socket simultaneously
     """
+
+    greet_user()
+
     sys.stdout.write('+>')
     sys.stdout.flush()
     while True:
