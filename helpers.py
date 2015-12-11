@@ -36,20 +36,19 @@ def nonce(length):
 
 
 def rsa_encrypt(pub_key, msgbytes):
-    return pub_key.encrypt(msgbytes,
-                           padding_asym.OAEP(
-                               mgf=padding_asym.MGF1(algorithm=hashes.SHA1()),
-                               algorithm=hashes.SHA1(),
-                               label=None))
+    return pub_key.encrypt(
+        msgbytes,
+        padding_asym.OAEP(mgf=padding_asym.MGF1(algorithm=hashes.SHA1()),
+                          algorithm=hashes.SHA1(),
+                          label=None))
 
 
 def rsa_decrypt(priv_key, cipher_bytes):
     return priv_key.decrypt(
         cipher_bytes,
-        padding_asym.OAEP(
-            mgf=padding_asym.MGF1(algorithm=hashes.SHA1()),
-            algorithm=hashes.SHA1(),
-            label=None))
+        padding_asym.OAEP(mgf=padding_asym.MGF1(algorithm=hashes.SHA1()),
+                          algorithm=hashes.SHA1(),
+                          label=None))
 
 
 def pad(string):
@@ -73,10 +72,9 @@ def parse_private_key(pem_string):
     """
     loads a PEM format private key, not encrypted on disk.
     """
-    return serialization.load_pem_private_key(
-        pem_string,
-        password=None,
-        backend=default_backend())
+    return serialization.load_pem_private_key(pem_string,
+                                              password=None,
+                                              backend=default_backend())
 
 
 def parse_public_key(pem_string):
@@ -93,17 +91,19 @@ def aes_key():
 def aes_encrypt(key, iv, plaintext):
     # build a cipher using aes_key and init vector, iv
     padded = pad(plaintext)
-    cipher = Cipher(algorithms.AES(key),
-                    modes.CBC(iv),
-                    backend=default_backend())
+    cipher = Cipher(
+        algorithms.AES(key),
+        modes.CBC(iv),
+        backend=default_backend())
     encryptor = cipher.encryptor()
     return (encryptor.update(padded) + encryptor.finalize())
 
 
 def aes_decrypt(key, iv, cipher_bytes):
-    cipher = Cipher(algorithms.AES(key),
-                    modes.CBC(iv),
-                    backend=default_backend())
+    cipher = Cipher(
+        algorithms.AES(key),
+        modes.CBC(iv),
+        backend=default_backend())
     decryptor = cipher.decryptor()
     return unpad(decryptor.update(cipher_bytes) + decryptor.finalize())
 

@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives.asymmetric import padding as padding_asym
 
 logging.basicConfig()
 logger = logging.getLogger('chat-server')
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)
 
 KEYCHAIN = {}
 USERS = {}  # maps uid to User class
@@ -93,8 +93,8 @@ def handle_login_response(body, sender):
 
     enc_answer = pload(body['payload'])
     # make sure this is wrapped in an error handler
-    dec_answer = aes_decrypt(user.session_key.decode('base64'), user.iv,
-                             enc_answer)
+    dec_answer = aes_decrypt(
+        user.session_key.decode('base64'), user.iv, enc_answer)
     logger.debug("DECRYPTED ANSWER: {}".format(dec_answer))
 
     if dec_answer == user.nonce_server:
@@ -123,7 +123,7 @@ def handle_login(body, sender):
 
 def terminate_login(body, sender):
     # TODO: remove from ATTEMPTED_LOGINS
-    # and penalize in brown list for failed attempt by IP
+    # and penalize in brown list for failed attempt by IP/usrname
     pass
 
 
@@ -136,8 +136,8 @@ def handle_logout_init(body, sender):
     user = validate_user_cookie(body.get('cookie'), USERS)
 
     payload = pload(body['payload'])
-    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv,
-                             payload))
+    data = jload(aes_decrypt(
+        user.session_key.decode('base64'), user.iv, payload))
 
     if not data['username'] == user.username:
         logger.debug("INVALID LOGOUT REQUEST -> USERNAME DOESN'T MATCH!")
@@ -147,8 +147,8 @@ def handle_logout_init(body, sender):
 
     resp = jdump({'nonce_user': data['nonce_user'], })
 
-    resp_payload = pdump(aes_encrypt(user.session_key.decode('base64'),
-                                     user.iv, resp))
+    resp_payload = pdump(aes_encrypt(
+        user.session_key.decode('base64'), user.iv, resp))
 
     resp = jdump({'kind': 'LOGOUT', 'payload': resp_payload})
 
@@ -174,8 +174,8 @@ def handle_logout_fin(body, sender):
 
     payload = pload(body['payload'])
 
-    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv,
-                             payload))
+    data = jload(aes_decrypt(
+        user.session_key.decode('base64'), user.iv, payload))
 
     logout_nonce = data['nonce_user']
 
@@ -226,17 +226,16 @@ def handle_logout(body, sender):
 def handle_list(body, sender):
     logger.debug("[RECEIVED LIST]...")
 
-    user = USERS[body.get('cookie')]
-    if not user:
-        # DoS cookie is invalid
-        logger.debug("terminating connection, cookie invalid in response")
-        terminate_login(body, sender)
+    try:
+        user = validate_user_cookie(body.get('cookie'), USERS)
+    except:
+        terminate_connection(body, sender)
 
     # only ever one context, don't need to switch on context.
     payload = pload(body['payload'])
 
-    data = jload(aes_decrypt(user.session_key.decode('base64'), user.iv,
-                             payload))
+    data = jload(aes_decrypt(
+        user.session_key.decode('base64'), user.iv, payload))
 
     #logger.debug("RECEIVED DATA: {}".format(data))
 
@@ -249,8 +248,8 @@ def handle_list(body, sender):
         'nonce_user': data['nonce_user']
     })
 
-    resp_payload = aes_encrypt(user.session_key.decode('base64'), user.iv,
-                               list_response)
+    resp_payload = aes_encrypt(
+        user.session_key.decode('base64'), user.iv, list_response)
 
     resp = jdump({'kind': 'LIST', 'payload': pdump(resp_payload), })
 
@@ -258,9 +257,69 @@ def handle_list(body, sender):
     user.send(_SOCK, resp)
 
 
-def handle_connect(*args):
+def build_ticket_to(user, target, nonce_user, ts):
+    """
+    TTB = Ksb{A, B, ip_port_a, Na, server_timestamp, Ka_pub}
+    """
+
+    ticket = jdump({
+        'from': user.username,
+        'to': target.username,
+        'from_addr': user.addr,
+        'nonce_user': nonce_user,
+        'server_ts': ts,
+        'from_public': user.public_key,
+    })
+
+    payload = aes_encrypt(
+        target.session_key.decode('base64'), target.iv, ticket)
+
+    return pdump(payload)
+
+
+def handle_connect(body, sender):
+    """
+    S -> A: Ksa{TTB, A, B, Na, serv_ts, ip_port_b}
+    TTB = Ksb{A, B, ip_port_a, Na, server_timestamp, Ka_pub}
+    """
     logger.debug("[RECEIVED CONNECT]...")
-    print args
+    try:
+        user = validate_user_cookie(body.get('cookie'), USERS)
+    except:
+        terminate_connection(body, sender)
+    payload = pload(body['payload'])
+
+    data = jload(aes_decrypt(
+        user.session_key.decode('base64'), user.iv, payload))
+
+    if not data['from'] == user.username:
+        logger.debug("INVALID CONNECT REQUEST -> FROM DOESN'T MATCH!")
+        terminate_login(body, sender)
+
+    if not data['to'] in USERS:
+        # TODO: send a message back here..
+        logger.debug("INVALID CONNECT REQUEST -> TO DOESN'T MATCH USER")
+
+    target = USERS.get(data['to'])
+    server_ts = time.time()
+    # assuming all is validated..
+    TTT = build_ticket_to(user, target, data['nonce_user'], server_ts)
+
+    connect_response = jdump({
+        'ticket': TTT,
+        'to': data['to'],
+        'from': data['from'],
+        'nonce_user': data['nonce_user'],
+        'to_addr': target.addr,
+        'server_ts': server_ts,
+    })
+
+    payload = aes_encrypt(
+        user.session_key.decode('base64'), user.iv, connect_response)
+
+    resp = jdump({'kind': 'CONNECT', 'payload': pdump(payload)})
+
+    user.send(_SOCK, resp)
 
 # a handler for each valid message type
 handlers = {
