@@ -261,20 +261,25 @@ def build_ticket_to(user, target, nonce_user, ts):
     """
     TTB = Ksb{A, B, ip_port_a, Na, server_timestamp, Ka_pub}
     """
-
     ticket = jdump({
         'from': user.username,
         'to': target.username,
         'from_addr': user.addr,
         'nonce_user': nonce_user,
         'server_ts': ts,
-        'from_public': user.public_key,
+        'from_public': public_bytes(user.public_key),
     })
 
     payload = aes_encrypt(
         target.session_key.decode('base64'), target.iv, ticket)
 
-    return pdump(payload)
+    return pdump(payload.encode('base64'))
+
+
+def user_by_username(username):
+    for cookie, user in USERS.items():
+        if user.username in (username):
+            return user
 
 
 def handle_connect(body, sender):
@@ -296,14 +301,18 @@ def handle_connect(body, sender):
         logger.debug("INVALID CONNECT REQUEST -> FROM DOESN'T MATCH!")
         terminate_login(body, sender)
 
-    if not data['to'] in USERS:
-        # TODO: send a message back here..
-        logger.debug("INVALID CONNECT REQUEST -> TO DOESN'T MATCH USER")
+    to = data.get('to')
+    target = user_by_username(to)
+    if not target:
+        uerror(user, 'No user named {} is logged in!'.format(to), 'connect')
+        logger.debug("Can't find target: {}".format(to))
+        return
 
-    target = USERS.get(data['to'])
     server_ts = time.time()
     # assuming all is validated..
     TTT = build_ticket_to(user, target, data['nonce_user'], server_ts)
+
+    logger.debug("BUILT TICKET TO TARGET...")
 
     connect_response = jdump({
         'ticket': TTT,
@@ -317,7 +326,9 @@ def handle_connect(body, sender):
     payload = aes_encrypt(
         user.session_key.decode('base64'), user.iv, connect_response)
 
-    resp = jdump({'kind': 'CONNECT', 'payload': pdump(payload)})
+    payload = pdump(payload)
+
+    resp = jdump({'kind': 'CONNECT', 'payload': payload})
 
     user.send(_SOCK, resp)
 
@@ -328,6 +339,27 @@ handlers = {
     'LIST': handle_list,
     'CONNECT': handle_connect,
 }
+
+
+def uerror(user, error, context=''):
+    # send the user a polite message to be printed
+    # in the client
+    error_payload = jdump({
+        'server_kind': 'error',
+        'error': error,
+        'context': context,
+    })
+    logger.debug("SENDING USER ERROR: {}".format(error_payload))
+
+    payload = pdump(aes_encrypt(user.session_key.decode('base64'), 
+        user.iv, error_payload))
+
+    resp = jdump({
+        'kind': 'SERVER',
+        'payload': payload,
+    })
+
+    user.send(_SOCK, resp)
 
 
 def listen_and_serve():

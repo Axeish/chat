@@ -17,11 +17,17 @@ def jdump(data):
     # wrap this in a try catch as well TODO
     return json.dumps(data)
 
+def jdumpb(data):
+    # wrap this in a try catch as well TODO
+    return json.dump(data)
 
 def jload(string):
     # TODO: ERRORS
     return json.loads(string)
 
+def jloadb(string):
+    # TODO: ERRORS
+    return json.load(string)
 
 def pdump(data):
     return pickle.dumps(data)
@@ -110,3 +116,9 @@ def aes_decrypt(key, iv, cipher_bytes):
 
 def init_vector(size):
     return os.urandom(size)
+
+
+def public_bytes(public_key):
+    return public_key.public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo)

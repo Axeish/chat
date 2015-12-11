@@ -17,7 +17,8 @@ logger.setLevel(logging.DEBUG)
 
 ADDR_BOOK = {}  # holds addr tuples for all comms
 KEYCHAIN = {}  # holds keys
-BUF_SIZE = 2048
+BUF_SIZE = 4096 # big enough for our largest json string obj.
+MAX_MESSAGE_LENGTH = 256 # characters
 LOGIN = {'connections': {}}
 NONCE_SIZE = 16  # bytes
 
@@ -69,9 +70,7 @@ def make_keys():
                                                    key_size=2048,
                                                    backend=default_backend())
     KEYCHAIN['public'] = KEYCHAIN['private'].public_key()
-    KEYCHAIN['public_bytes'] = KEYCHAIN['public'].public_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo)
+    KEYCHAIN['public_bytes'] = public_bytes(KEYCHAIN['public'])
 
 
 def get_login_submit_payload(msg):
@@ -110,10 +109,10 @@ def handle_login_cookie(msg):
 
 
 def handle_login_challenge(msg):
-    logger.debug("Rec'd Login Challenge")
+    #logger.debug("Rec'd Login Challenge")
     challenge = jload(rsa_decrypt(KEYCHAIN['private'], pload(msg['payload'])))
 
-    logger.debug("CHALLENGE IS: {}".format(challenge))
+    #logger.debug("CHALLENGE IS: {}".format(challenge))
 
     # TODO: CHECK THIS IF VALID CHALLENGE ->
     if challenge['user_nonce'] != LOGIN['nonce']:
@@ -130,8 +129,8 @@ def handle_login_challenge(msg):
     KEYCHAIN['session'] = challenge.get('session_key').decode('base64')
 
     # else we can respond to the challenge.
-    logger.debug("SERVER NONCE RECEIVED: {}".format(challenge[
-        'server_nonce'].format('base64')))
+    #logger.debug("SERVER NONCE RECEIVED: {}".format(challenge[
+    #    'server_nonce'].format('base64')))
 
     answer = aes_encrypt(KEYCHAIN['session'], iv, challenge['server_nonce'])
 
@@ -152,12 +151,12 @@ def handle_invite_init(msg):
 
     # try to encrypt the ticket
     enc_ticket = pload(payload)
-    dec_ticket = aes_decrypt(LOGIN['session'], LOGIN['init_vector'],
+    dec_ticket = aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
                 enc_ticket)
 
     ticket = jload(dec_ticket)
 
-    c = Connection.from_ticket(ticket, (LOGIN['username']))
+    c = Connection.from_ticket(ticket, (LOGIN['username'], _SOCK))
     if not c:
         logger.debug("Couldn't create connection from ticket")
         return
@@ -167,6 +166,7 @@ def handle_invite_init(msg):
 
 
 def handle_invite_confirm(msg):
+    logger.debug("RECEIVED INVITE CONFIRM...")
     payload = msg.get('payload')
     dec_payload = rsa_decrypt(private_key, pload(payload))
     data = jload(dec_payload)
@@ -187,6 +187,7 @@ invite_handlers = {
 
 
 def invite_handler(msg):
+    logger.debug("RECEIVED AN INVITE SOCKET MESSAGE: {}".format(msg))
     ctx = msg.get('context')
     # TODO: VALIDATE CONTEXT!
     handler = invite_handlers[ctx]
@@ -273,37 +274,49 @@ def connect_handler(msg):
     dec_conn_resp = aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
                                 enc_conn_resp)
 
-    conn_response = jload(dec_list_resp)
+    conn_response = jload(dec_conn_resp)
 
-    to = msg.get('to')
+    to = conn_response.get('to')
     if not to:
         logger.debug("INVALID 'to' in CONNECT, ignoring")
         return
     # look up connection in LOGIN['connections']
     connection = LOGIN['connections'][to]
 
-    if not connection.validate(connect_response):
+    if not connection.validate(conn_response):
         logger.debug("Unable to validate connect request")
         return
 
     invitation = jdump({
             'kind': 'INVITE',
+            'context': 'init',
             'ticket': connection.ticket,
     })
 
-    c.invite(invitation)
+    connection.invite(invitation)
 
 
-def invite_request(to):
+def invite_request(line):
     """
     User is requesting to talk to a user in the list.
     """
+    try:
+        to = line.split(' ', 1)[1]
+    except:
+        print "Invalid use of '@invite' -> try '@invite username'"
+        return
+
+    logger.debug("INVITE REQUEST TO: {}".format(to))
+    if to == LOGIN['username']:
+        print "You can't invite yourself!"
+        return
+
     connect_nonce = nonce(NONCE_SIZE)
-    logger.debug("SETTING LIST NONCE: {}".format(connect_nonce))
+    #logger.debug("SETTING CONNECT NONCE: {}".format(connect_nonce))
 
     data = {'from': LOGIN['username'], 'to': to, 'nonce_user': connect_nonce, }
 
-    c = Connection(connect_nonce, to, LOGIN['username'], send_data_to)
+    c = Connection(connect_nonce, to, LOGIN['username'], _SOCK)
 
     if to in LOGIN['connections']:
         # we've already tried to connect to this person
@@ -377,6 +390,24 @@ def logout_request(*args):
 def message_request():
     pass
 
+
+FATAL_FROM_SERVER = ['login']
+
+def server_handler(msg):
+    # handles messages for the user from the server
+    # i.e. error messages.
+    enc_data = pload(msg.get('payload'))
+    data = jload(aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
+                enc_data))
+    error = data.get('error')
+    context = data.get('context')
+
+    print "**SERVER**: {}".format(error)
+
+    if context in FATAL_FROM_SERVER:
+        sys.exit(0)
+
+
 # a handler for each valid message type received
 socket_handlers = {
     # inputs from other clients
@@ -386,7 +417,8 @@ socket_handlers = {
     'LOGIN': login_handler,
     'LOGOUT': logout_handler,
     'LIST': list_handler,
-    'CONNECT': connect_handler
+    'CONNECT': connect_handler,
+    'SERVER': server_handler,
 }
 
 
@@ -402,11 +434,16 @@ def handle_socket_event():
         msg = jload(raw_msg)
         #logger.debug("RECD MESSAGE: {}".format(msg))
     except Exception as e:
-        print "[ERROR]: {}".format(e)
+        logger.debug("[ERROR]: {}, raw_msg: {}".format(e, raw_msg))
+        return
+
     # TODO: VALIDATE MESSAGE HERE
     handler = socket_handlers[msg.get('kind')]
     handler(msg)
 
+
+def greet_user():
+    print "welcome to the chat client!!"
 
 # special messages from user and their handlers:
 user_protocols = {
@@ -421,14 +458,12 @@ user_protocols = {
 def handle_stdin_event():
     text = sys.stdin.readline()
     if any(text.startswith(p) for p in user_protocols.keys()):
-        handler = user_protocols[text.rstrip()]
+        handler = user_protocols[text.rstrip().split(' ', 1)[0]]
         handler(text)
     else:
         logger.debug("[CHAT INPUT]: {}".format(text))
 
 
-def greet_user():
-    print "welcome to the chat client!!"
 
 def run():
     """

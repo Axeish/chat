@@ -1,13 +1,23 @@
 import time
 from helpers import *
 
+logging.basicConfig()
+logger = logging.getLogger('chat-client')
+logger.setLevel(logging.DEBUG)
+
 class Connection(object):
-    def __init__(self, nonce, to, frm, from_ticket=False, public_key=None):
+    def __init__(self,
+                 nonce,
+                 to,
+                 frm,
+                 socket,
+                 from_ticket=False,
+                 public_key=None):
         """
         called when Connection created from invite request
         """
         self.socket = socket
-        self.invter_nonce = nonce
+        self.inviter_nonce = nonce
         self.invitee_nonce = None
         self.to = to
         self.is_from_ticket = False
@@ -16,10 +26,12 @@ class Connection(object):
         self.public_key = public_key
 
     def validate(self, c):
+
         """
         c is the decoded payload from
         the server with connection details
         """
+        logger.debug("Validating server connect payload...")
         # first check if the to/from is correct
         if c.get('to') != self.to:
             return False
@@ -27,7 +39,7 @@ class Connection(object):
         if c.get('from') != self.frm:
             return False
 
-        if c.get('nonce_user') != self.nonce:
+        if c.get('nonce_user') != self.inviter_nonce:
             return False
 
         server_ts = c.get('server_ts')
@@ -43,31 +55,30 @@ class Connection(object):
         to_addr = c.get('to_addr')
         if not to_addr:
             return False
-        self.to_addr = to_addr
+        self.to_addr = tuple(to_addr)
 
         return True
 
-    def validate_server_ts(timestamp):
+    def validate_server_ts(self, timestamp):
         accept_interval = 60 * 60 * 24
         now = time.time()
         pre = now - accept_interval
         post = now + accept_interval
         return timestamp < post and timestamp > pre
 
-    def update_connection(self):
-        pass
-
     def invite(self, invitation):
-        sender(invitation, self.to_addr)
+        logger.debug("sending invite to: {}...".format(self.to))
+        self.message(invitation)
         # send the invite to b.
 
     @classmethod
-    def from_ticket(cls, ticket, me):
+    def from_ticket(cls, ticket, me, socket):
         """
         creates a connection when being received from a user
         if a connection is created from a ticket
         the nonce belongs to from, the to address is THIS CLIENT
         """
+        logger.debug("Building connection from ticket...")
 
         ticket_from = ticket.get('from')
         if not ticket_from:
@@ -96,13 +107,19 @@ class Connection(object):
         # if we're here, ticket is good (hopefully)
         # in the end we only care that the connection can be used
         # to .message() the invitee from the perspective of this client
-        c = Connection(ticket_nonce_user, ticket_from, ticket_to, from_ticket=True, public_key=ticket_from_pkey)
+        c = Connection(ticket_nonce_user,
+                       ticket_from,
+                       ticket_to,
+                       from_ticket=True,
+                       public_key=ticket_from_pkey,
+                       socket=socket)
         c.server_ts = ticket_server_ts
         # invitee nonce ->
         c.invitee_nonce = nonce(16)
+        logger.debug("Successfully built connection from ticket")
         return c
 
-    def make_session_key():
+    def make_session_key(self):
         key = aes_key()
         self.session_key = key
         iv = init_vector(16)
@@ -114,10 +131,11 @@ class Connection(object):
         B -> A: {serv_ts, Na, A, B, Kab, Nb}Ka_pub
         we are 'B' if this method is being called
         """
+        logger.debug("Responding to invite request")
         session_key, iv = self.make_session_key()
         resp = jdump({
             'server_ts': self.server_ts,
-            'inviter_nonce': self.nonce,
+            'inviter_nonce': self.inviter_nonce,
             'to': self.to,
             'from': self.frm,
             'session': session_key,
@@ -132,11 +150,11 @@ class Connection(object):
 
         self.message(confirmation)
 
-
     def confirm_connection(self, data):
         """
         here we are "A" (inviter) and the other client is "B" (invitee)
         """
+        logger.debug("Confirming Connection...")
         # at this point, the driver client has found this connection
         # in the connections dict, and is sending the payload
         # along with the client's private key for decryption
@@ -150,8 +168,10 @@ class Connection(object):
         invitee_nonce = data['invitee_nonce']
         payload = pdump(aes_encrypt(self.session_key, self.iv, invitee_nonce))
         self.message(payload)
-        return True
 
+        logger.debug("Connection is confirmed")
+
+        return True
 
     def message(self, payload):
         self.socket.sendto(payload, self.to_addr)
