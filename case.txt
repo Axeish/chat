@@ -1,0 +1,9 @@
+case 1: User initiated chat with server
+"enter username /password
+
+CAse 2 : USer login 
+"Welcome to Turtle chat . What would you like to do:"
+
+
+case 3:
+
