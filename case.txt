@@ -1,0 +1,41 @@
+case 1: User initiated chat with server
+   client terminal :"Enter username /password
+
+Case 2 : USer login successfully
+   client terminal:"Welcome to Turtle chat. Please type the task below. Type '@help' if you are a new user or need help with any command.
+                    What would you like to do:"
+
+
+case 3: User entered wrong password or a username :
+   Client: "The username or password did not match. please try again.
+
+case 4: user blackisted or IP blacklisted
+   Client: "The username or password did not match and you exceeded number of tries. Please try after x second"
+
+case 5: User attempts while blacklisted.
+   Client: "Please try after x seconds"
+
+case 6 : user aksed for list 
+   Client: "The users that are currently online are :
+
+case 7:  invite 'xyz' for chat
+   Client: "The chat initiated. 
+
+case 8:    invite 'wrong_username' to chat
+   Client: " Sorry the user is either offline or does not exist. Type '@list' for list of users currently online. Type '@help' if you are a new user or need help with any command.
+
+case 9: logout
+   Client1: "Ending the session...
+   client2: "User xyz left the session. Ending the session..."
+
+case 10: user exit() or ctrl+'D' without logout
+   client2: "User xyz left the session. Ending the session..."
+
+case 11: invite 'xyz' but invitation  failed.
+   client: "Sorry Session cannot be inititiated now."
+
+case 12: user entered a command which does not exist example @groupinvite 
+   Client: "Invalid command. Type '@help' if you are a new user or need help with any command. "
+ 
+
+
