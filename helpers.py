@@ -4,9 +4,11 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding, serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding as padding_asym
+import hashlib
 import logging
 import pickle
 import time
+from config import default_users
 
 logging.basicConfig()
 logger = logging.getLogger('chat-helpers')
@@ -135,3 +137,23 @@ def validate_client_ts(timestamp):
     pre = now - accept_interval
     post = now + accept_interval
     return timestamp < post and timestamp > pre
+
+
+def verify_password(username, password):
+    data = default_users.get(username)
+    if not data:
+        return False
+    m = hashlib.sha256()
+    m.update(data[0])
+    m.update(password)
+    return data[1] == m.hexdigest()
+
+
+def prep_cookie(username, addr):
+    data = default_users.get(username)
+    if not data:
+        return False
+    m = hashlib.sha256()
+    m.update(data[0])
+    m.update(password)
+    return data[1] == m.hexdigest()

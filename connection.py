@@ -110,7 +110,7 @@ class Connection(object):
         c.server_ts = ticket_server_ts
         c.to_addr = tuple(ticket_from_addr)  # reverse perspective of this connection
         # invitee nonce ->
-        c.invitee_nonce = nonce(16)
+        c.invitee_nonce = nonce(8)
         logger.debug("Successfully built connection from ticket")
         return c
 
@@ -136,6 +136,7 @@ class Connection(object):
             'session': session_key.encode('base64'),
             'invitee_nonce': self.invitee_nonce
         })
+        logger.debug("SIZE OF RESPONSE: {}".format(resp))
 
         public_key = parse_public_key(str(self.public_key))
         payload = pdump(rsa_encrypt(public_key, resp))

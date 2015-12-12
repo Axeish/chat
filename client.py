@@ -94,6 +94,7 @@ def handle_login_cookie(msg):
     # WE NEED TO SEND COOKIE,
 
     data = get_login_submit_payload(msg)
+    logger.debug("SIZE OF DATA IS: {}".format(len(jdump(data))))
     payload = rsa_encrypt(KEYCHAIN['server_pub'], jdump(data))
     public_key = rsa_encrypt(KEYCHAIN['server_pub'], KEYCHAIN['public_bytes'])
 

@@ -3,16 +3,10 @@ import os
 import sys
 import logging
 import socket
-import json
 import time
 from user import User
 from helpers import *
 from config import config
-
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives import padding, serialization, hashes
-from cryptography.hazmat.primitives.asymmetric import padding as padding_asym
 
 logging.basicConfig()
 logger = logging.getLogger('chat-server')
@@ -42,7 +36,8 @@ def handle_login_init(body, sender):
 
 
 def make_cookie(addr):
-    dough = '-'.join(map(str, [addr[0], addr[1], time.time()]))
+    dough = '-'.join(map(str, [addr[0], addr[1]]))
+    logger.debug("COOKIE: {}")
     # TODO: cookie = encrypt(dough)
     # return cookie
     return dough
@@ -54,7 +49,7 @@ def handle_login_submit(body, sender):
     if not user:
         # DoS cookie is invalid
         logger.debug("terminating connection, cookie invalid in submit")
-        terminate_login(body, sender)
+        terminate_connection(body, sender)
 
     payload = jload(rsa_decrypt(KEYCHAIN['private'], pload(body['payload'])))
     user_public_key_bytes = rsa_decrypt(KEYCHAIN['private'],
@@ -65,6 +60,10 @@ def handle_login_submit(body, sender):
     nonce_server = nonce(16)
     nonce_time = time.time()
     iv = init_vector(16)
+
+    if not verify_password(payload['username'], payload['password_hash']):
+        logger.debug("username and password don't match!")
+        terminate_connection(body, sender)
 
     user.update_submit(payload['username'], payload['password_hash'],
                        payload['nonce_user'], public_key, k_session,
@@ -89,7 +88,7 @@ def handle_login_response(body, sender):
     try:
         user = validate_user_cookie(body.get('cookie'), ATTEMPTED_LOGINS)
     except:
-        terminate_login(body, sender)
+        terminate_connection(body, sender)
 
     enc_answer = pload(body['payload'])
     # make sure this is wrapped in an error handler
@@ -115,13 +114,13 @@ login_handlers = {
 def handle_login(body, sender):
     ctx = body.get('context')
     if not ctx or ctx not in login_handlers:
-        terminate_login(body, sender)
+        terminate_connection(body, sender)
 
     handler = login_handlers[ctx]
     handler(body, sender)
 
 
-def terminate_login(body, sender):
+def terminate_connection(body, sender):
     # TODO: remove from ATTEMPTED_LOGINS
     # and penalize in brown list for failed attempt by IP/usrname
     pass
@@ -141,7 +140,7 @@ def handle_logout_init(body, sender):
 
     if not data['username'] == user.username:
         logger.debug("INVALID LOGOUT REQUEST -> USERNAME DOESN'T MATCH!")
-        terminate_login(body, sender)
+        terminate_connection(body, sender)
 
     user.prep_logout(data['nonce_user'])
 
@@ -217,7 +216,7 @@ def handle_logout(body, sender):
     logger.debug("[RECEIVED LOGOUT]...")
     ctx = body.get('context')
     if not ctx or ctx not in logout_handlers:
-        terminate_login(body, sender)
+        terminate_connection(body, sender)
 
     handler = logout_handlers[ctx]
     handler(body, sender)
@@ -241,7 +240,7 @@ def handle_list(body, sender):
 
     if not data['username'] == user.username:
         logger.debug("INVALID LIST REQUEST -> USERNAME DOESN'T MATCH!")
-        terminate_login(body, sender)
+        terminate_connection(body, sender)
 
     list_response = jdump({
         'list': [u.username for u in USERS.values()],
@@ -300,7 +299,7 @@ def handle_connect(body, sender):
 
     if not data['from'] == user.username:
         logger.debug("INVALID CONNECT REQUEST -> FROM DOESN'T MATCH!")
-        terminate_login(body, sender)
+        terminate_connection(body, sender)
 
     to = data.get('to')
     target = user_by_username(to)
