@@ -17,8 +17,8 @@ logger.setLevel(logging.DEBUG)
 
 ADDR_BOOK = {}  # holds addr tuples for all comms
 KEYCHAIN = {}  # holds keys
-BUF_SIZE = 4096 # big enough for our largest json string obj.
-MAX_MESSAGE_LENGTH = 256 # characters
+BUF_SIZE = 16384  # big enough for our largest json string obj.
+MAX_MESSAGE_LENGTH = 256  # characters
 LOGIN = {'connections': {}}
 NONCE_SIZE = 16  # bytes
 
@@ -145,18 +145,31 @@ def handle_login_challenge(msg):
 
 
 def handle_invite_init(msg):
+    """
+    receives the following from another client:
+    where the ticket is a ticket to US encrypted with our session
+    key from the server.
+
+    # invitation = jdump({
+    #         'kind': 'INVITE',
+    #         'context': 'init',
+    #         'ticket': connection.ticket,
+    # })
+    """
     payload = msg.get('ticket')
     if not payload:
         return
 
-    # try to encrypt the ticket
+    # try to decrypt the ticket
     enc_ticket = pload(payload)
     dec_ticket = aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
-                enc_ticket)
+                             enc_ticket)
 
     ticket = jload(dec_ticket)
 
-    c = Connection.from_ticket(ticket, (LOGIN['username'], _SOCK))
+    c = Connection.from_ticket(ticket, LOGIN['username'], _SOCK)
+    logger.debug("adding potential connection to {}".format(c.to))
+    LOGIN['connections'][c.to] = c
     if not c:
         logger.debug("Couldn't create connection from ticket")
         return
@@ -168,26 +181,54 @@ def handle_invite_init(msg):
 def handle_invite_confirm(msg):
     logger.debug("RECEIVED INVITE CONFIRM...")
     payload = msg.get('payload')
-    dec_payload = rsa_decrypt(private_key, pload(payload))
+    dec_payload = rsa_decrypt(KEYCHAIN['private'], pload(payload))
     data = jload(dec_payload)
 
     data = jload(dec_payload)
-    to = data['to']
+    logger.debug("DATA IS: {}".format(data))
+
+    to = str(data['to'].rstrip())
+
+    logger.debug("CONNECTIONS ARE: {} TO IS: {}".format(
+        LOGIN['connections'].keys(), to))
+
     c = LOGIN['connections'].get(to)
-    result = c.confirm_connection(data)
+
+    iv_enc = msg.get('init_vector')
+
+    result = c.confirm_connection(data, iv_enc)
     if result:
-        print "Connected to {}. Type '@msg {}: Hello!' to say hi.".format(to, to)
+        print "Connected to {}. Type '@msg {}: Hello!' to say hi.".format(to,
+                                                                          to)
     # TODO: handle all this UI stuff
+
+
+def handle_invite_confirm_ack(msg):
+    logger.debug("INVITE CONFIRM ACK RECEIVED...")
+    data = pload(msg.get('payload'))
+    # decrypt the nonce, look up connection by nonce
+    # if it exists, mark it as confirmed
+    # data is aes_encrypt(self.session_key, self.iv, invitee_nonce)
+    for to, conn in LOGIN['connections'].items():
+        try:
+            value = aes_decrypt(conn.session_key, conn.iv, data)
+            if value == conn.invitee_nonce:
+                conn.confirmed = True
+                logger.debug("confirming connection with {}".format(to))
+                return
+        except:
+            logger.debug("confirm_ack not from {}".format(to))
+            continue
 
 # server inputs:
 invite_handlers = {
     'init': handle_invite_init,
     'confirm': handle_invite_confirm,
+    'confirm_ack': handle_invite_confirm_ack,
 }
 
 
 def invite_handler(msg):
-    logger.debug("RECEIVED AN INVITE SOCKET MESSAGE: {}".format(msg))
     ctx = msg.get('context')
     # TODO: VALIDATE CONTEXT!
     handler = invite_handlers[ctx]
@@ -195,7 +236,39 @@ def invite_handler(msg):
 
 
 def message_handler(msg):
-    pass
+    """
+    must decode: with hmac
+        data = jdump({
+        'message': msg_body,
+        'inviter_nonce': nonce,
+        'sender': LOGIN['username'],
+        'timestamp': time.time(),
+    })
+
+    """
+    payload = pload(msg.get('payload'))
+
+    # TODO HMAC CONFIRM
+    conn = [c for c in LOGIN['connections'].values()
+            if c.confirmed and c.inviter_nonce == msg.get('inviter_nonce')][0]
+    try:
+        data = jload(aes_decrypt(conn.session_key, conn.iv, payload))
+    except:
+        logger.debug("Invalid message from conn: {}".format(conn.to))
+        return
+
+    if data.get('sender') != conn.to:
+        logger.debug("Invalid sender {}".format(data.get('sender')))
+        return
+
+    if not validate_client_ts(data.get('timestamp')):
+        logger.debug("Timestamp bad on message from {}, ignoring.".format(
+            data.get('sender')))
+        return
+
+    msg_body = data.get('message')
+    print "{}: {}".format(data.get('sender'), msg_body)
+
 
 def logout_handler(msg):
     # If a server sends us a logout message
@@ -205,14 +278,16 @@ def logout_handler(msg):
     enc_payload = msg.get('')
     enc_logout_resp = pload(msg['payload'])
     dec_logout_resp = jload(aes_decrypt(KEYCHAIN['session'], KEYCHAIN[
-        'init_vector'], enc_logout_resp))
+        'init_vector'
+    ], enc_logout_resp))
     if dec_logout_resp.get('nonce_user') == LOGIN['nonce_user_logout']:
         # tell server we're logging out.
 
         answer = jdump({'nonce_user': LOGIN['nonce_user_logout']})
 
         payload = pdump(aes_encrypt(KEYCHAIN['session'], KEYCHAIN[
-            'init_vector'], answer))
+            'init_vector'
+        ], answer))
 
         resp = jdump({
             'kind': 'LOGOUT',
@@ -248,7 +323,6 @@ def list_handler(msg):
     for username in user_list:
         print "- {}".format(username)
 
-
 # server inputs:
 login_handlers = {
     'cookie': handle_login_cookie,
@@ -276,7 +350,7 @@ def connect_handler(msg):
 
     conn_response = jload(dec_conn_resp)
 
-    to = conn_response.get('to')
+    to = str(conn_response.get('to').rstrip())
     if not to:
         logger.debug("INVALID 'to' in CONNECT, ignoring")
         return
@@ -288,9 +362,9 @@ def connect_handler(msg):
         return
 
     invitation = jdump({
-            'kind': 'INVITE',
-            'context': 'init',
-            'ticket': connection.ticket,
+        'kind': 'INVITE',
+        'context': 'init',
+        'ticket': connection.ticket,
     })
 
     connection.invite(invitation)
@@ -301,7 +375,8 @@ def invite_request(line):
     User is requesting to talk to a user in the list.
     """
     try:
-        to = line.split(' ', 1)[1]
+        to = str(line.split(' ', 1)[1].rstrip())
+        logger.debug("INIT INVITE -> TO IS {}".format(to))
     except:
         print "Invalid use of '@invite' -> try '@invite username'"
         return
@@ -387,18 +462,56 @@ def logout_request(*args):
     send_data_to(req, ADDR_BOOK['server'])
 
 
-def message_request():
+def message_request(msg):
+    try:
+        # strip @msg header
+        msg_body = msg.split(' ', 1)[1]
+        to, message = msg_body.split(':', 1)
+
+        logger.debug("message TO: {}".format(to, message))
+    except Exception as e:
+        print "The message format is '@msg TO: Your Message.'"
+        logger.debug("Error on message parse: {}".format(e))
+        return
     pass
+
+    if len(msg_body) > MAX_MESSAGE_LENGTH:
+        print "That message is too long to send (Max: 256 chars)"
+        return
+
+    conn = LOGIN['connections'][to]
+
+    if not conn.confirmed:
+        print "You are not connected to B, try inviting them first."
+
+    data = jdump({
+        'message': message,
+        'sender': LOGIN['username'],
+        'timestamp': time.time(),
+    })
+
+    payload = pdump(aes_encrypt(conn.session_key, conn.iv, data))
+
+    msgpack = jdump({
+        'kind': 'MESSAGE',
+        'inviter_nonce': conn.inviter_nonce,
+        'payload': payload,
+    })
+
+    conn.message(msgpack)
+
+    print "{} -> {}: {}".format(LOGIN['username'], to, message)
 
 
 FATAL_FROM_SERVER = ['login']
+
 
 def server_handler(msg):
     # handles messages for the user from the server
     # i.e. error messages.
     enc_data = pload(msg.get('payload'))
     data = jload(aes_decrypt(KEYCHAIN['session'], KEYCHAIN['init_vector'],
-                enc_data))
+                             enc_data))
     error = data.get('error')
     context = data.get('context')
 
@@ -406,7 +519,6 @@ def server_handler(msg):
 
     if context in FATAL_FROM_SERVER:
         sys.exit(0)
-
 
 # a handler for each valid message type received
 socket_handlers = {
@@ -434,8 +546,9 @@ def handle_socket_event():
         msg = jload(raw_msg)
         #logger.debug("RECD MESSAGE: {}".format(msg))
     except Exception as e:
+        print "Something unexpected went wrong, try to restart you client."
         logger.debug("[ERROR]: {}, raw_msg: {}".format(e, raw_msg))
-        return
+        sys.exit(0)
 
     # TODO: VALIDATE MESSAGE HERE
     handler = socket_handlers[msg.get('kind')]
@@ -462,7 +575,6 @@ def handle_stdin_event():
         handler(text)
     else:
         logger.debug("[CHAT INPUT]: {}".format(text))
-
 
 
 def run():

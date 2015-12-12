@@ -5,6 +5,7 @@ logging.basicConfig()
 logger = logging.getLogger('chat-client')
 logger.setLevel(logging.DEBUG)
 
+
 class Connection(object):
     def __init__(self,
                  nonce,
@@ -24,9 +25,9 @@ class Connection(object):
         self.frm = frm
         self.is_from_ticket = from_ticket
         self.public_key = public_key
+        self.confirmed = False
 
     def validate(self, c):
-
         """
         c is the decoded payload from
         the server with connection details
@@ -43,7 +44,7 @@ class Connection(object):
             return False
 
         server_ts = c.get('server_ts')
-        if not server_ts or not self.validate_server_ts(server_ts):
+        if not server_ts or not validate_server_ts(server_ts):
             return False
         self.server_ts = server_ts
 
@@ -58,13 +59,6 @@ class Connection(object):
         self.to_addr = tuple(to_addr)
 
         return True
-
-    def validate_server_ts(self, timestamp):
-        accept_interval = 60 * 60 * 24
-        now = time.time()
-        pre = now - accept_interval
-        post = now + accept_interval
-        return timestamp < post and timestamp > pre
 
     def invite(self, invitation):
         logger.debug("sending invite to: {}...".format(self.to))
@@ -108,12 +102,13 @@ class Connection(object):
         # in the end we only care that the connection can be used
         # to .message() the invitee from the perspective of this client
         c = Connection(ticket_nonce_user,
-                       ticket_from,
-                       ticket_to,
+                       str(ticket_from.rstrip()),
+                       str(ticket_to.rstrip()),
                        from_ticket=True,
                        public_key=ticket_from_pkey,
                        socket=socket)
         c.server_ts = ticket_server_ts
+        c.to_addr = tuple(ticket_from_addr)  # reverse perspective of this connection
         # invitee nonce ->
         c.invitee_nonce = nonce(16)
         logger.debug("Successfully built connection from ticket")
@@ -136,21 +131,24 @@ class Connection(object):
         resp = jdump({
             'server_ts': self.server_ts,
             'inviter_nonce': self.inviter_nonce,
-            'to': self.to,
-            'from': self.frm,
-            'session': session_key,
+            'to': self.frm,  # reverse perspective when ticket receiver
+            'from': self.to,
+            'session': session_key.encode('base64'),
             'invitee_nonce': self.invitee_nonce
         })
-        payload = pdump(rsa_encrypt(self.public_key, resp))
+
+        public_key = parse_public_key(str(self.public_key))
+        payload = pdump(rsa_encrypt(public_key, resp))
         confirmation = jdump({
             'kind': 'INVITE',
             'context': 'confirm',
-            'payload': payload
+            'payload': payload,
+            'init_vector': self.iv.encode('base64'),
         })
 
         self.message(confirmation)
 
-    def confirm_connection(self, data):
+    def confirm_connection(self, data, iv_enc):
         """
         here we are "A" (inviter) and the other client is "B" (invitee)
         """
@@ -163,13 +161,23 @@ class Connection(object):
         # veryfiy to/from
         # verify server_ts
         # verify inviter nonce
+        # set session key
+
+        self.session_key = data['session'].decode('base64')
+        self.iv = iv_enc.decode('base64')
 
         # encrypt invitee nonce, send back
         invitee_nonce = data['invitee_nonce']
         payload = pdump(aes_encrypt(self.session_key, self.iv, invitee_nonce))
-        self.message(payload)
+        conf = jdump({
+            'kind': 'INVITE',
+            'context': 'confirm_ack',
+            'payload': payload
+        })
+        self.message(conf)
 
         logger.debug("Connection is confirmed")
+        self.confirmed = True
 
         return True
 

@@ -273,7 +273,8 @@ def build_ticket_to(user, target, nonce_user, ts):
     payload = aes_encrypt(
         target.session_key.decode('base64'), target.iv, ticket)
 
-    return pdump(payload.encode('base64'))
+    logger.debug("TICKET SIZE: {}".format(len(bytes(payload))))
+    return pdump(payload)
 
 
 def user_by_username(username):
@@ -351,13 +352,10 @@ def uerror(user, error, context=''):
     })
     logger.debug("SENDING USER ERROR: {}".format(error_payload))
 
-    payload = pdump(aes_encrypt(user.session_key.decode('base64'), 
-        user.iv, error_payload))
+    payload = pdump(aes_encrypt(user.session_key.decode('base64'), user.iv,
+                                error_payload))
 
-    resp = jdump({
-        'kind': 'SERVER',
-        'payload': payload,
-    })
+    resp = jdump({'kind': 'SERVER', 'payload': payload, })
 
     user.send(_SOCK, resp)
 

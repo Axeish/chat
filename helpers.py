@@ -6,6 +6,7 @@ from cryptography.hazmat.primitives import padding, serialization, hashes
 from cryptography.hazmat.primitives.asymmetric import padding as padding_asym
 import logging
 import pickle
+import time
 
 logging.basicConfig()
 logger = logging.getLogger('chat-helpers')
@@ -17,17 +18,11 @@ def jdump(data):
     # wrap this in a try catch as well TODO
     return json.dumps(data)
 
-def jdumpb(data):
-    # wrap this in a try catch as well TODO
-    return json.dump(data)
 
 def jload(string):
     # TODO: ERRORS
     return json.loads(string)
 
-def jloadb(string):
-    # TODO: ERRORS
-    return json.load(string)
 
 def pdump(data):
     return pickle.dumps(data)
@@ -122,3 +117,21 @@ def public_bytes(public_key):
     return public_key.public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo)
+
+
+def validate_server_ts(timestamp):
+    timestamp = int(timestamp)
+    accept_interval = 60 * 60 * 24
+    now = time.time()
+    pre = now - accept_interval
+    post = now + accept_interval
+    return timestamp < post and timestamp > pre
+
+
+def validate_client_ts(timestamp):
+    timestamp = int(timestamp)
+    accept_interval = 60
+    now = time.time()
+    pre = now - accept_interval
+    post = now + accept_interval
+    return timestamp < post and timestamp > pre
