@@ -3,7 +3,7 @@ from helpers import *
 
 logging.basicConfig()
 logger = logging.getLogger('chat-client')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 
 class Connection(object):
@@ -121,7 +121,7 @@ class Connection(object):
         self.iv = iv
         return key, iv
 
-    def respond_to_invite(self):
+    def respond_to_invite(self, pub_invitee):
         """
         B -> A: {serv_ts, Na, A, B, Kab, Nb}Ka_pub
         we are 'B' if this method is being called
@@ -136,15 +136,16 @@ class Connection(object):
             'session': session_key.encode('base64'),
             'invitee_nonce': self.invitee_nonce
         })
-        logger.debug("SIZE OF RESPONSE: {}".format(resp))
 
         public_key = parse_public_key(str(self.public_key))
         payload = pdump(rsa_encrypt(public_key, resp))
+
         confirmation = jdump({
             'kind': 'INVITE',
             'context': 'confirm',
             'payload': payload,
             'init_vector': self.iv.encode('base64'),
+            'pub_invitee': pub_invitee, # to be set as pub in other conn.
         })
 
         self.message(confirmation)
@@ -156,19 +157,13 @@ class Connection(object):
         logger.debug("Confirming Connection...")
         # at this point, the driver client has found this connection
         # in the connections dict, and is sending the payload
-        # along with the client's private key for decryption
-
-        # TODO
-        # veryfiy to/from
-        # verify server_ts
-        # verify inviter nonce
-        # set session key
 
         self.session_key = data['session'].decode('base64')
         self.iv = iv_enc.decode('base64')
 
         # encrypt invitee nonce, send back
         invitee_nonce = data['invitee_nonce']
+
         payload = pdump(aes_encrypt(self.session_key, self.iv, invitee_nonce))
         conf = jdump({
             'kind': 'INVITE',

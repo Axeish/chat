@@ -7,15 +7,18 @@ import time
 from user import User
 from helpers import *
 from config import config
+from collections import defaultdict
 
 logging.basicConfig()
 logger = logging.getLogger('chat-server')
-logger.setLevel(logging.DEBUG)
+logger.setLevel(logging.INFO)
 
 KEYCHAIN = {}
 USERS = {}  # maps uid to User class
 ATTEMPTED_LOGINS = {}
-
+BROWNLIST = defaultdict(int)
+BROWN_THRESHOLD = 3 # number of logins before rate limiting
+# TODO: not yet enforced -> out of time.
 
 def load_server_keys():
     with open('server.private.key') as f:
@@ -31,6 +34,10 @@ def load_server_keys():
 def handle_login_init(body, sender):
     # send cookie
     cookie = make_cookie(sender)
+    # brown_value = BROWNLIST.get(str(sender[1]), 0)
+    # if not brown_ok(brown_value):
+    #     return
+
     ATTEMPTED_LOGINS[cookie] = User(cookie, sender)
     resp = jdump({'kind': 'LOGIN', 'cookie': cookie, 'context': 'cookie', })
     logger.debug("RECV LOGIN INIT, RESP IS {}".format(resp))
@@ -42,8 +49,6 @@ def make_cookie(addr):
 
     cookie = aes_encrypt(KEYCHAIN['cookie_key'], KEYCHAIN['cookie_iv'],
                          dough).encode('base64')
-    # TODO: cookie = encrypt(dough)
-    # return cookie
     return cookie
 
 
@@ -67,6 +72,7 @@ def handle_login_submit(body, sender):
     logger.debug("RECV LOGIN SUBMIT from {}".format(sender))
     if not verify_cookie(sender, body.get('cookie')):
         logger.debug("Invalid cookie sent from {}".format(sender))
+        serror(sender, "invalid server cookie, try restarting client.", 'login')
         terminate_connection(body, sender)
         return
 
@@ -74,7 +80,9 @@ def handle_login_submit(body, sender):
     if not user:
         # DoS cookie is invalid
         logger.debug("terminating connection, cookie invalid in submit")
+        serror(sender, "Session Expired. Restart Client.", 'login')
         terminate_connection(body, sender)
+        return
 
     payload = jload(rsa_decrypt(KEYCHAIN['private'], pload(body['payload'])))
     user_public_key_bytes = rsa_decrypt(KEYCHAIN['private'],
@@ -87,15 +95,20 @@ def handle_login_submit(body, sender):
     iv = init_vector(16)
 
     if not verify_password(payload['username'], payload['password_hash']):
+        serror(sender, "Username/Password combination do not match.", 'login')
         logger.debug("username and password don't match!")
+        terminate_connection(body, sender)
+        return
+
+    already_connected = len([u for u in USERS.values() if u.username == payload['username']]) > 0
+    if already_connected:
+        serror(sender, "User is already connected", 'login')
         terminate_connection(body, sender)
 
     user.update_submit(payload['username'], payload['password_hash'],
                        payload['nonce_user'], public_key, k_session,
                        nonce_server, nonce_time, iv)
 
-    # check user is registered and not logged in, with brown list handling
-    # validate password hash
 
     resp = jdump({
         'kind': 'LOGIN',
@@ -113,7 +126,9 @@ def handle_login_response(body, sender):
     try:
         user = validate_user_cookie(body.get('cookie'), ATTEMPTED_LOGINS)
     except:
+        serror(sender, "Internal Server Error.", 'login')
         terminate_connection(body, sender)
+        return
 
     enc_answer = pload(body['payload'])
     # make sure this is wrapped in an error handler
@@ -125,9 +140,19 @@ def handle_login_response(body, sender):
         logger.debug("LOGGING IN: {}".format(user.username))
         USERS[user.cookie] = user
     else:
+        uerror(user, 'Unable to log in, please restart client and try again.', 'login')
         logger.debug("FAILED TO LOGIN: {}".format(user.username))
         logger.debug("ANSWER WAS: {}".format(enc_answer.decode('base64')))
 
+    payload = aes_encrypt(user.session_key.decode('base64'), user.iv, user.nonce)
+
+    resp = jdump({
+        'kind': 'LOGIN',
+        'context': 'ack',
+        'payload': pdump(payload),
+    })
+
+    user.send(_SOCK, resp)
 
 login_handlers = {
     'INIT': handle_login_init,
@@ -140,20 +165,30 @@ def handle_login(body, sender):
     ctx = body.get('context')
     if not ctx or ctx not in login_handlers:
         terminate_connection(body, sender)
+        return
 
     handler = login_handlers[ctx]
     handler(body, sender)
 
 
 def terminate_connection(body, sender):
-    # TODO: remove from ATTEMPTED_LOGINS
-    # and penalize in brown list for failed attempt by IP/usrname
-    pass
+    # penalize in brown list for failed attempt by IP/usrname
+    logger.debug("TERMINATING CONNECTION WITH: {}".format(sender))
 
+    for cookie, user in ATTEMPTED_LOGINS.items():
+        if user.addr == sender:
+            del ATTEMPTED_LOGINS[cookie]
+    for cookie, user in USERS.items():
+        if user.addr == sender:
+            del USERS[cookie]
 
-def get_cookie(hostname, addr):
-    # TODO: make unique w/o username
-    return "{}:{}".format(hostname, addr[1])
+    try:
+        serror(sender, "Terminating Connection.", "terminate")
+    except:
+        # at this point, we don't care if this person knows what's going on.
+        pass
+
+    BROWNLIST[str(sender[1])] += 1
 
 
 def handle_logout_init(body, sender):
@@ -166,6 +201,7 @@ def handle_logout_init(body, sender):
     if not data['username'] == user.username:
         logger.debug("INVALID LOGOUT REQUEST -> USERNAME DOESN'T MATCH!")
         terminate_connection(body, sender)
+        return
 
     user.prep_logout(data['nonce_user'])
 
@@ -195,6 +231,7 @@ def handle_logout_fin(body, sender):
         user = validate_user_cookie(body.get('cookie'), USERS)
     except:
         terminate_connection(body, sender)
+        return
 
     payload = pload(body['payload'])
 
@@ -242,6 +279,7 @@ def handle_logout(body, sender):
     ctx = body.get('context')
     if not ctx or ctx not in logout_handlers:
         terminate_connection(body, sender)
+        return
 
     handler = logout_handlers[ctx]
     handler(body, sender)
@@ -254,6 +292,7 @@ def handle_list(body, sender):
         user = validate_user_cookie(body.get('cookie'), USERS)
     except:
         terminate_connection(body, sender)
+        return
 
     # only ever one context, don't need to switch on context.
     payload = pload(body['payload'])
@@ -266,6 +305,7 @@ def handle_list(body, sender):
     if not data['username'] == user.username:
         logger.debug("INVALID LIST REQUEST -> USERNAME DOESN'T MATCH!")
         terminate_connection(body, sender)
+        return
 
     list_response = jdump({
         'list': [u.username for u in USERS.values()],
@@ -317,6 +357,7 @@ def handle_connect(body, sender):
         user = validate_user_cookie(body.get('cookie'), USERS)
     except:
         terminate_connection(body, sender)
+        return
     payload = pload(body['payload'])
 
     data = jload(aes_decrypt(
@@ -325,6 +366,7 @@ def handle_connect(body, sender):
     if not data['from'] == user.username:
         logger.debug("INVALID CONNECT REQUEST -> FROM DOESN'T MATCH!")
         terminate_connection(body, sender)
+        return
 
     to = data.get('to')
     target = user_by_username(to)
@@ -365,6 +407,19 @@ handlers = {
     'CONNECT': handle_connect,
 }
 
+def serror(sender, error, context=''):
+    # send the user a polite message to be printed
+    # in the client
+    error_payload = jdump({
+        'server_kind': 'error',
+        'error': error,
+        'context': context,
+    })
+    logger.debug("SENDING ANON ERROR: {}".format(error_payload))
+
+    resp = jdump({'kind': 'SERVER', 'payload': error_payload})
+
+    _SOCK.sendto(resp, sender)
 
 def uerror(user, error, context=''):
     # send the user a polite message to be printed

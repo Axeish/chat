@@ -157,3 +157,33 @@ def prep_cookie(username, addr):
     m.update(data[0])
     m.update(password)
     return data[1] == m.hexdigest()
+
+def unknown_error():
+    print "An unknown error has occured, please restart the chat client."
+
+
+def make_hmac(private_key, message):
+    signator = private_key.signer(
+    padding_asym.PSS(
+            mgf=padding_asym.MGF1(hashes.SHA256()),
+            salt_length=padding_asym.PSS.MAX_LENGTH),
+        hashes.SHA256())
+    signator.update(message)
+    return signator.finalize()
+
+
+def check_hmac(public_key, hmac, cipher_text):
+    verifier = public_key.verifier(
+    hmac,
+    padding_asym.PSS(
+        mgf=padding_asym.MGF1(hashes.SHA256()),
+        salt_length=padding_asym.PSS.MAX_LENGTH),
+    hashes.SHA256())
+
+    verifier.update(cipher_text)
+    try:
+        verifier.verify()
+    except Exception as e:
+        logger.debug("Invalid hmac error: {}".format(e))
+        return False
+    return True
