@@ -24,6 +24,8 @@ def load_server_keys():
             KEYCHAIN['private'] = parse_private_key(keystr)
         except Exception as e:
             logger.error("Couldn't read private key from file: {}".format(e))
+    KEYCHAIN['cookie_key'] = aes_key()
+    KEYCHAIN['cookie_iv'] = init_vector(16)
 
 
 def handle_login_init(body, sender):
@@ -36,15 +38,38 @@ def handle_login_init(body, sender):
 
 
 def make_cookie(addr):
-    dough = '-'.join(map(str, [addr[0], addr[1]]))
-    logger.debug("COOKIE: {}")
+    dough = '-'.join(map(str, [addr[0], addr[1], int(time.time())]))
+
+    cookie = aes_encrypt(KEYCHAIN['cookie_key'], KEYCHAIN['cookie_iv'],
+                         dough).encode('base64')
     # TODO: cookie = encrypt(dough)
     # return cookie
-    return dough
+    return cookie
+
+
+def verify_cookie(addr, cookie):
+    dough = aes_decrypt(KEYCHAIN['cookie_key'], KEYCHAIN['cookie_iv'],
+                        cookie.decode('base64'))
+    try:
+        addr0, addr1, timestamp = dough.split('-')
+    except:
+        logger.debug("Invalid cookie from: {}".format(addr))
+        return False
+
+    result = addr0 == str(addr[0]) and addr1 == str(
+        addr[1]) and validate_server_ts(timestamp)
+    logger.debug("COOKIE CHECK: {} - {} - {} - {}".format(result, addr0, addr1,
+                                                          timestamp))
+    return result
 
 
 def handle_login_submit(body, sender):
     logger.debug("RECV LOGIN SUBMIT from {}".format(sender))
+    if not verify_cookie(sender, body.get('cookie')):
+        logger.debug("Invalid cookie sent from {}".format(sender))
+        terminate_connection(body, sender)
+        return
+
     user = ATTEMPTED_LOGINS[body.get('cookie')]
     if not user:
         # DoS cookie is invalid
